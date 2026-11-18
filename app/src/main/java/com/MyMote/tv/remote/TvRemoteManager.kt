@@ -1,0 +1,32 @@
+package com.MyMote.tv.remote
+
+import com.MyMote.tv.core.model.ConnectionState
+import com.MyMote.tv.core.model.RemoteButton
+import com.MyMote.tv.core.model.TvDevice
+import com.google.android.apps.tv.remote.protocol.Direction
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+interface TvRemoteManager {
+    val connectionState: StateFlow<ConnectionState>
+    val remoteState: StateFlow<RemoteState>
+    val currentDevice: StateFlow<TvDevice?>
+    val imeActive: StateFlow<Boolean>
+    val lastImeText: StateFlow<String>
+    val connectionDiagnostics: StateFlow<ConnectionDiagnostics>
+
+    fun connect(device: TvDevice)
+    fun disconnect()
+    fun sendKey(keyCode: Int, direction: Direction = Direction.SHORT)
+    fun sendButton(button: RemoteButton, direction: Direction = Direction.SHORT) {
+        sendKey(button.keyCode, direction)
+    }
+    fun sendImeText(text: String)
+    fun sendImeTextWithFallback(text: String, useKeyCodesFallback: Boolean = false)
+    fun sendChar(char: Char)
+    fun launchAppLink(appLink: String)
+    fun reconnectIfDisconnected() {}
+    fun onNetworkLost() {}
+    fun onNetworkRestored() {}
+    fun onAppResume() {}
+}

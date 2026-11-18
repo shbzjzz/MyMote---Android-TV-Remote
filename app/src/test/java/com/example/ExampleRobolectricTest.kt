@@ -24,14 +24,14 @@ class ExampleRobolectricTest {
   fun `read string from context`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val appName = context.getString(R.string.app_name)
-    assertEquals("MoteTV", appName)
+    assertEquals("MyMote", appName)
   }
 
   @Test
   fun `launch MainActivity with saved device`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val credStore = com.gala.motetv.storage.TvCredentialStore(context)
-    val testDevice = com.gala.motetv.core.model.TvDevice(
+    val credStore = com.MyMote.tv.storage.TvCredentialStore(context)
+    val testDevice = com.MyMote.tv.core.model.TvDevice(
       id = "test-tv-1",
       name = "Living Room TV",
       host = "192.168.1.100",
@@ -56,7 +56,7 @@ class ExampleRobolectricTest {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val tempFile = java.io.File.createTempFile("test_cast", ".mp4")
     tempFile.writeBytes("video bytes".toByteArray())
-    val mediaInfo = com.gala.motetv.media.SelectedMediaInfo(
+    val mediaInfo = com.MyMote.tv.media.SelectedMediaInfo(
       uri = android.net.Uri.fromFile(tempFile),
       name = "test.mp4",
       size = tempFile.length(),
@@ -64,7 +64,7 @@ class ExampleRobolectricTest {
     )
 
     // 1. Start streaming via MediaStreamService
-    com.gala.motetv.media.MediaStreamService.startStreaming(context, mediaInfo)
+    com.MyMote.tv.media.MediaStreamService.startStreaming(context, mediaInfo)
 
     // 2. Open MainActivity while service is running
     val controller1 = org.robolectric.Robolectric.buildActivity(MainActivity::class.java)
@@ -85,19 +85,19 @@ class ExampleRobolectricTest {
   @Test
   fun `render MediaScreen in streaming state`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val credStore = com.gala.motetv.storage.TvCredentialStore(context)
-    val remoteManager = com.gala.motetv.remote.TvRemoteManagerImpl(credStore)
-    val castController = com.gala.motetv.media.LocalMediaCastController(context, remoteManager)
+    val credStore = com.MyMote.tv.storage.TvCredentialStore(context)
+    val remoteManager = com.MyMote.tv.remote.TvRemoteManagerImpl(credStore)
+    val castController = com.MyMote.tv.media.LocalMediaCastController(context, remoteManager)
 
     val tempFile = java.io.File.createTempFile("test_cast2", ".mp4")
-    val mediaInfo = com.gala.motetv.media.SelectedMediaInfo(
+    val mediaInfo = com.MyMote.tv.media.SelectedMediaInfo(
       uri = android.net.Uri.fromFile(tempFile),
       name = "my_video.mp4",
       size = 104857600L,
       mimeType = "video/mp4"
     )
 
-    val streamingState = com.gala.motetv.media.CastSessionState.Streaming(
+    val streamingState = com.MyMote.tv.media.CastSessionState.Streaming(
       media = mediaInfo,
       streamUrl = "http://192.168.1.50:8989/media",
       isPlaying = true

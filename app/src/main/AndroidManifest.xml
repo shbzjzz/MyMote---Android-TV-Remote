@@ -26,13 +26,13 @@
         android:theme="@style/Theme.MyApplication">
 
         <service
-            android:name="com.gala.motetv.media.MediaStreamService"
+            android:name="com.MyMote.tv.media.MediaStreamService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
         <service
-            android:name="com.gala.motetv.mirror.ScreenMirrorService"
+            android:name="com.MyMote.tv.mirror.ScreenMirrorService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />

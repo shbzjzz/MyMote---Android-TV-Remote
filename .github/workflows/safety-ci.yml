@@ -21,23 +21,42 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Verify PackageSafetyGuard & Debloat unit tests
-        run: ./gradlew :app:testDebugUnitTest --tests "com.gala.motetv.debloat.*" --tests "com.gala.motetv.tvhome.*"
+      - name: Verify PackageSafetyGuard, Debloat, and Launcher Recovery unit tests
+        run: ./gradlew :app:testDebugUnitTest --tests "com.MyMote.tv.debloat.*" --tests "com.MyMote.tv.tvhome.*"
 
       - name: Run full unit test suite
         run: ./gradlew :app:testDebugUnitTest
 
-      - name: Static check — ensure no Issue #884 or stock launcher entry is safe/optional
+      - name: Run Android Lint check
+        run: ./gradlew :app:lintDebug
+
+      - name: Static check — enforce safety guard, fail-closed persistence, and no guessing invariants
         run: |
           python3 - <<'PY'
-          import pathlib, re, sys
+          import pathlib, sys
 
-          catalog = pathlib.Path("app/src/main/java/com/gala/motetv/debloat/CleanYourTvPackageCatalog.kt").read_text()
-          guard = pathlib.Path("app/src/main/java/com/gala/motetv/debloat/PackageSafetyGuard.kt").read_text()
+          catalog = pathlib.Path("app/src/main/java/com/MyMote/tv/debloat/CleanYourTvPackageCatalog.kt").read_text()
+          guard = pathlib.Path("app/src/main/java/com/MyMote/tv/debloat/PackageSafetyGuard.kt").read_text()
+          scanner = pathlib.Path("app/src/main/java/com/MyMote/tv/debloat/TvPackageScanner.kt").read_text()
+          debloat = pathlib.Path("app/src/main/java/com/MyMote/tv/debloat/DebloatManager.kt").read_text()
+          launcher = pathlib.Path("app/src/main/java/com/MyMote/tv/tvhome/CleanYourTvLauncherManager.kt").read_text()
 
           # Ensure replacement launcher flag never allows stock launcher bypass
-          if "isStockLauncher && !replacementReady" in guard or "isStockLauncher && !replacementReady" in pathlib.Path("app/src/main/java/com/gala/motetv/debloat/TvPackageScanner.kt").read_text():
+          if "isStockLauncher && !replacementReady" in guard or "isStockLauncher && !replacementReady" in scanner:
               print("FAIL: Stock launcher bypass based on replacementReady still present!")
+              sys.exit(1)
+
+          # Ensure no memory-only HOME backup fallback or /.MainActivity guessing
+          if "memoryOrigPkg" in launcher or "memoryOrigAct" in launcher:
+              print("FAIL: RAM-only original HOME fallback present in CleanYourTvLauncherManager!")
+              sys.exit(1)
+          if "/.MainActivity" in launcher:
+              print("FAIL: Hardcoded /.MainActivity guessing present in CleanYourTvLauncherManager!")
+              sys.exit(1)
+
+          # Ensure listSystemPackages().getOrDefault(emptySet()) silent bypass is absent
+          if "listSystemPackages().getOrDefault" in scanner or "listSystemPackages().getOrDefault" in debloat:
+              print("FAIL: Silent listSystemPackages().getOrDefault fallback present!")
               sys.exit(1)
 
           critical_pkgs = [
@@ -61,5 +80,5 @@ jobs:
                   print(f"FAIL: Critical package {pkg} missing from CleanYourTvPackageCatalog.kt")
                   sys.exit(1)
 
-          print("Static catalog & safety guard checks passed.")
+          print("Static catalog, launcher persistence, & safety guard checks passed.")
           PY

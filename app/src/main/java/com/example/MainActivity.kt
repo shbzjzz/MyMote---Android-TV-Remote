@@ -18,48 +18,48 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.gala.motetv.core.logging.TvLogger
-import com.gala.motetv.core.model.ConnectionState
-import com.gala.motetv.core.model.TvDevice
-import com.gala.motetv.core.util.NetworkMonitor
-import com.gala.motetv.discovery.NsdTvDiscoveryManager
-import com.gala.motetv.launcher.AppDefinition
-import com.gala.motetv.launcher.AppLauncher
-import com.gala.motetv.launcher.DefaultApps
-import com.gala.motetv.pairing.PairingState
-import com.gala.motetv.pairing.TvPairingManagerImpl
-import com.gala.motetv.remote.TvRemoteManagerImpl
-import com.gala.motetv.storage.TvCredentialStore
-import com.gala.motetv.ui.components.BottomNavBar
-import com.gala.motetv.ui.components.NavTab
-import com.gala.motetv.ui.components.PinEntryDialog
-import com.gala.motetv.ui.screens.AppsScreen
-import com.gala.motetv.ui.screens.DevicesScreen
-import com.gala.motetv.ui.screens.MediaScreen
-import com.gala.motetv.ui.screens.RemoteControlScreen
-import com.gala.motetv.ui.screens.SettingsScreen
-import com.gala.motetv.ui.theme.BackgroundLight
-import com.gala.motetv.ui.theme.MoteTvTheme
+import com.MyMote.tv.core.logging.TvLogger
+import com.MyMote.tv.core.model.ConnectionState
+import com.MyMote.tv.core.model.TvDevice
+import com.MyMote.tv.core.util.NetworkMonitor
+import com.MyMote.tv.discovery.NsdTvDiscoveryManager
+import com.MyMote.tv.launcher.AppDefinition
+import com.MyMote.tv.launcher.AppLauncher
+import com.MyMote.tv.launcher.DefaultApps
+import com.MyMote.tv.pairing.PairingState
+import com.MyMote.tv.pairing.TvPairingManagerImpl
+import com.MyMote.tv.remote.TvRemoteManagerImpl
+import com.MyMote.tv.storage.TvCredentialStore
+import com.MyMote.tv.ui.components.BottomNavBar
+import com.MyMote.tv.ui.components.NavTab
+import com.MyMote.tv.ui.components.PinEntryDialog
+import com.MyMote.tv.ui.screens.AppsScreen
+import com.MyMote.tv.ui.screens.DevicesScreen
+import com.MyMote.tv.ui.screens.MediaScreen
+import com.MyMote.tv.ui.screens.RemoteControlScreen
+import com.MyMote.tv.ui.screens.SettingsScreen
+import com.MyMote.tv.ui.theme.BackgroundLight
+import com.MyMote.tv.ui.theme.MoteTvTheme
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import com.gala.motetv.media.LocalMediaCastController
-import com.gala.motetv.auth.AuthManager
-import com.gala.motetv.ui.screens.SignInScreen
+import com.MyMote.tv.media.LocalMediaCastController
+import com.MyMote.tv.auth.AuthManager
+import com.MyMote.tv.ui.screens.SignInScreen
 
-import com.gala.motetv.mirror.ScreenMirrorController
-import com.gala.motetv.ui.screens.MirrorScreen
-import com.gala.motetv.adb.AdbConnectionManagerImpl
-import com.gala.motetv.adb.AdbConnectionState
-import com.gala.motetv.adb.AdbCredentialStore
-import com.gala.motetv.debloat.DebloatManager
-import com.gala.motetv.debloat.DebloatRepository
-import com.gala.motetv.debloat.TvPackageScanner
-import com.gala.motetv.debloat.TvRecoveryCoordinator
-import com.gala.motetv.tvhome.CleanYourTvLauncherManager
-import com.gala.motetv.tvhome.CleanYourTvThemeManager
-import com.gala.motetv.ui.screens.TvDebloatScreen
-import com.gala.motetv.ui.screens.TvHomeThemesScreen
+import com.MyMote.tv.mirror.ScreenMirrorController
+import com.MyMote.tv.ui.screens.MirrorScreen
+import com.MyMote.tv.adb.AdbConnectionManagerImpl
+import com.MyMote.tv.adb.AdbConnectionState
+import com.MyMote.tv.adb.AdbCredentialStore
+import com.MyMote.tv.debloat.DebloatManager
+import com.MyMote.tv.debloat.DebloatRepository
+import com.MyMote.tv.debloat.TvPackageScanner
+import com.MyMote.tv.debloat.TvRecoveryCoordinator
+import com.MyMote.tv.tvhome.CleanYourTvLauncherManager
+import com.MyMote.tv.tvhome.CleanYourTvThemeManager
+import com.MyMote.tv.ui.screens.TvDebloatScreen
+import com.MyMote.tv.ui.screens.TvHomeThemesScreen
 
 enum class MainDisplayMode {
     TABS,
@@ -89,7 +89,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        TvLogger.i(TvLogger.TAG_GENERAL, "MoteTV Android TV Remote initialized (v2.5 Cyber Glass Edition)")
+        TvLogger.i(TvLogger.TAG_GENERAL, "MyMote Android TV Remote initialized (v2.5 Cyber Glass Edition)")
 
         credentialStore = TvCredentialStore(applicationContext)
         discoveryManager = NsdTvDiscoveryManager(applicationContext)
