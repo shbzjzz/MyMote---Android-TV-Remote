@@ -1,0 +1,65 @@
+name: Debloat Safety CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  safety-verification:
+    name: Safety Guard & Debloat Recovery Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Verify PackageSafetyGuard & Debloat unit tests
+        run: ./gradlew :app:testDebugUnitTest --tests "com.gala.motetv.debloat.*" --tests "com.gala.motetv.tvhome.*"
+
+      - name: Run full unit test suite
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Static check — ensure no Issue #884 or stock launcher entry is safe/optional
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+
+          catalog = pathlib.Path("app/src/main/java/com/gala/motetv/debloat/CleanYourTvPackageCatalog.kt").read_text()
+          guard = pathlib.Path("app/src/main/java/com/gala/motetv/debloat/PackageSafetyGuard.kt").read_text()
+
+          # Ensure replacement launcher flag never allows stock launcher bypass
+          if "isStockLauncher && !replacementReady" in guard or "isStockLauncher && !replacementReady" in pathlib.Path("app/src/main/java/com/gala/motetv/debloat/TvPackageScanner.kt").read_text():
+              print("FAIL: Stock launcher bypass based on replacementReady still present!")
+              sys.exit(1)
+
+          critical_pkgs = [
+              "com.google.android.permissioncontroller",
+              "com.android.permissioncontroller",
+              "com.google.android.packageinstaller",
+              "com.android.packageinstaller",
+              "com.google.android.ext.services",
+              "com.android.ext.services",
+              "com.google.android.ext.shared",
+              "com.android.ext.shared",
+              "com.google.android.modulemetadata",
+              "com.android.modulemetadata",
+              "com.google.android.tungsten.setupwraith",
+              "com.google.android.tvlauncher",
+              "com.google.android.apps.tv.launcherx",
+              "com.mitv.tvhome",
+          ]
+          for pkg in critical_pkgs:
+              if pkg not in catalog:
+                  print(f"FAIL: Critical package {pkg} missing from CleanYourTvPackageCatalog.kt")
+                  sys.exit(1)
+
+          print("Static catalog & safety guard checks passed.")
+          PY

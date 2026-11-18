@@ -1,0 +1,333 @@
+package com.gala.motetv.debloat
+
+import android.content.Context
+import android.content.SharedPreferences
+import com.gala.motetv.adb.TvDeviceInfo
+import org.json.JSONArray
+import org.json.JSONObject
+
+class DebloatRepository(
+    private val context: Context?,
+    private val simulateBackupFailureForTest: Boolean = false,
+    private val simulateModifiedPersistenceFailureForTest: Boolean = false,
+    private val prefsOverride: SharedPreferences? = null,
+    private val simulatePendingPersistenceFailureForTest: Boolean = false
+) {
+
+    companion object {
+        private const val PREFS_NAME = "motetv_debloat_records"
+        private const val KEY_LATEST_BACKUP = "latest_backup_json"
+        private const val KEY_MODIFIED_PACKAGES = "modified_by_motetv_set"
+        private const val KEY_PENDING_OPERATIONS = "pending_operations_json"
+        private const val KEY_HISTORY = "operation_history_json"
+        private const val MAX_HISTORY_ENTRIES = 100
+    }
+
+    private val prefs: SharedPreferences? by lazy {
+        prefsOverride ?: context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    private val memoryHistory = mutableListOf<DebloatOperationEntry>()
+
+    @Synchronized
+    fun saveBackup(record: DebloatBackupRecord): Result<DebloatBackupRecord> {
+        if (simulateBackupFailureForTest) {
+            return Result.failure(IllegalStateException("Simulated backup persistence failure"))
+        }
+        val p = prefs
+            ?: return Result.failure(IllegalStateException("Persistent storage unavailable (SharedPreferences is null)"))
+        return try {
+            val json = serializeBackup(record).toString(2)
+            val committed = p.edit().putString(KEY_LATEST_BACKUP, json).commit()
+            if (!committed) {
+                return Result.failure(IllegalStateException("Failed to commit debloat backup to persistent storage"))
+            }
+            val persistedJson = p.getString(KEY_LATEST_BACKUP, null)
+            if (persistedJson.isNullOrBlank()) {
+                return Result.failure(IllegalStateException("Backup commit returned true but backup was missing on read-back"))
+            }
+            val readBack = runCatching { deserializeBackup(JSONObject(persistedJson)) }.getOrNull()
+                ?: return Result.failure(IllegalStateException("Backup read-back deserialization failed"))
+            if (readBack.backupId != record.backupId ||
+                readBack.allInstalledPackages.size != record.allInstalledPackages.size ||
+                readBack.intendedDisablePackages != record.intendedDisablePackages
+            ) {
+                return Result.failure(IllegalStateException("Backup read-back mismatch after commit"))
+            }
+            Result.success(readBack)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    @Synchronized
+    fun getLatestBackup(): DebloatBackupRecord? {
+        val jsonStr = prefs?.getString(KEY_LATEST_BACKUP, null) ?: return null
+        return runCatching { deserializeBackup(JSONObject(jsonStr)) }.getOrNull()
+    }
+
+    @Synchronized
+    fun exportLatestBackupJson(): String? {
+        val backup = getLatestBackup() ?: return null
+        val root = serializeBackup(backup)
+        val historyArray = JSONArray()
+        getOperationHistory().forEach { entry ->
+            historyArray.put(
+                JSONObject().apply {
+                    put("id", entry.id)
+                    put("timestampMs", entry.timestampMs)
+                    put("action", entry.action.name)
+                    put("packageName", entry.packageName ?: "")
+                    put("succeeded", entry.succeeded)
+                    put("verifiedState", entry.verifiedState)
+                    put("detail", entry.detail)
+                }
+            )
+        }
+        root.put("operationHistory", historyArray)
+        return root.toString(2)
+    }
+
+    @Synchronized
+    fun markPackageModified(packageName: String): Result<Set<String>> {
+        val current = getModifiedPackages().toMutableSet()
+        current.add(packageName)
+        return saveModifiedSet(current)
+    }
+
+    @Synchronized
+    fun unmarkPackageModified(packageName: String): Result<Set<String>> {
+        val current = getModifiedPackages().toMutableSet()
+        current.remove(packageName)
+        return saveModifiedSet(current)
+    }
+
+    @Synchronized
+    fun getModifiedPackages(): Set<String> {
+        val p = prefs ?: return emptySet()
+        return p.getStringSet(KEY_MODIFIED_PACKAGES, emptySet())?.toSet() ?: emptySet()
+    }
+
+    @Synchronized
+    internal fun saveModifiedSet(set: Set<String>): Result<Set<String>> {
+        if (simulateModifiedPersistenceFailureForTest) {
+            return Result.failure(IllegalStateException("Simulated modified-package persistence failure"))
+        }
+        val p = prefs
+            ?: return Result.failure(IllegalStateException("Persistent storage unavailable (SharedPreferences is null)"))
+        val defensiveCopy = LinkedHashSet(set)
+        val committed = p.edit().putStringSet(KEY_MODIFIED_PACKAGES, defensiveCopy).commit()
+        if (!committed) {
+            return Result.failure(IllegalStateException("Failed to commit modified packages set to persistent storage"))
+        }
+        val readBack = p.getStringSet(KEY_MODIFIED_PACKAGES, null)?.toSet()
+            ?: return Result.failure(IllegalStateException("Modified packages commit returned true but set was missing on read-back"))
+        if (readBack != defensiveCopy) {
+            return Result.failure(IllegalStateException("Modified packages read-back mismatch after commit"))
+        }
+        return Result.success(readBack)
+    }
+
+    @Synchronized
+    fun getPendingOperations(): List<PendingDebloatOperation> {
+        val raw = prefs?.getString(KEY_PENDING_OPERATIONS, null) ?: return emptyList()
+        if (raw.isBlank()) return emptyList()
+        return runCatching { deserializePendingOperations(JSONArray(raw)) }.getOrDefault(emptyList())
+    }
+
+    @Synchronized
+    fun upsertPendingOperation(operation: PendingDebloatOperation): Result<List<PendingDebloatOperation>> {
+        val next = getPendingOperations()
+            .filterNot { it.packageName.equals(operation.packageName, ignoreCase = true) }
+            .toMutableList()
+        next.add(operation)
+        return savePendingOperations(next)
+    }
+
+    @Synchronized
+    fun removePendingOperation(packageName: String, operationId: String? = null): Result<List<PendingDebloatOperation>> {
+        val next = getPendingOperations().filterNot { op ->
+            op.packageName.equals(packageName, ignoreCase = true) &&
+                (operationId == null || op.operationId == operationId)
+        }
+        return savePendingOperations(next)
+    }
+
+    @Synchronized
+    fun clearAllPendingOperations(): Result<List<PendingDebloatOperation>> {
+        return savePendingOperations(emptyList())
+    }
+
+    @Synchronized
+    internal fun savePendingOperations(operations: List<PendingDebloatOperation>): Result<List<PendingDebloatOperation>> {
+        if (simulatePendingPersistenceFailureForTest) {
+            return Result.failure(IllegalStateException("Simulated pending-operation WAL persistence failure"))
+        }
+        val p = prefs
+            ?: return Result.failure(IllegalStateException("Persistent storage unavailable (SharedPreferences is null)"))
+        return try {
+            val json = serializePendingOperations(operations).toString()
+            val committed = p.edit().putString(KEY_PENDING_OPERATIONS, json).commit()
+            if (!committed) {
+                return Result.failure(IllegalStateException("Failed to commit pending debloat operations to persistent storage"))
+            }
+            val rawReadBack = p.getString(KEY_PENDING_OPERATIONS, null)
+                ?: return Result.failure(IllegalStateException("Pending operations commit returned true but record was missing on read-back"))
+            val parsedReadBack = runCatching { deserializePendingOperations(JSONArray(rawReadBack)) }.getOrNull()
+                ?: return Result.failure(IllegalStateException("Pending operations read-back deserialization failed"))
+            if (parsedReadBack != operations) {
+                return Result.failure(IllegalStateException("Pending operations read-back mismatch after commit"))
+            }
+            Result.success(parsedReadBack)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    @Synchronized
+    fun appendHistory(entry: DebloatOperationEntry) {
+        val list = getOperationHistory().toMutableList()
+        list.add(0, entry)
+        val trimmed = list.take(MAX_HISTORY_ENTRIES)
+        memoryHistory.clear()
+        memoryHistory.addAll(trimmed)
+
+        val arr = JSONArray()
+        trimmed.forEach { item ->
+            arr.put(
+                JSONObject().apply {
+                    put("id", item.id)
+                    put("timestampMs", item.timestampMs)
+                    put("action", item.action.name)
+                    put("packageName", item.packageName ?: "")
+                    put("succeeded", item.succeeded)
+                    put("verifiedState", item.verifiedState)
+                    put("detail", item.detail)
+                }
+            )
+        }
+        prefs?.edit()?.putString(KEY_HISTORY, arr.toString())?.apply()
+    }
+
+    @Synchronized
+    fun getOperationHistory(): List<DebloatOperationEntry> {
+        val raw = prefs?.getString(KEY_HISTORY, null)
+        if (raw.isNullOrBlank()) return memoryHistory.toList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                DebloatOperationEntry(
+                    id = o.getString("id"),
+                    timestampMs = o.getLong("timestampMs"),
+                    action = DebloatActionType.valueOf(o.getString("action")),
+                    packageName = o.optString("packageName").ifBlank { null },
+                    succeeded = o.getBoolean("succeeded"),
+                    verifiedState = o.optString("verifiedState"),
+                    detail = o.optString("detail")
+                )
+            }
+        }.getOrDefault(memoryHistory.toList())
+    }
+
+    private fun serializeBackup(record: DebloatBackupRecord): JSONObject {
+        val devObj = JSONObject().apply {
+            put("manufacturer", record.deviceInfo.manufacturer)
+            put("model", record.deviceInfo.model)
+            put("deviceName", record.deviceInfo.deviceName)
+            put("productBoard", record.deviceInfo.productBoard)
+            put("androidVersion", record.deviceInfo.androidVersion)
+            put("sdkVersion", record.deviceInfo.sdkVersion)
+            put("buildId", record.deviceInfo.buildId)
+            put("buildFingerprint", record.deviceInfo.buildFingerprint)
+            put("currentHomePackage", record.deviceInfo.currentHomePackage ?: "")
+            put("currentHomeActivity", record.deviceInfo.currentHomeActivity ?: "")
+        }
+        return JSONObject().apply {
+            put("backupId", record.backupId)
+            put("createdAtMs", record.createdAtMs)
+            put("deviceInfo", devObj)
+            put("allInstalledPackages", JSONArray(record.allInstalledPackages))
+            put("originallyDisabledPackages", JSONArray(record.originallyDisabledPackages))
+            put("originalHomePackage", record.originalHomePackage ?: "")
+            put("originalHomeActivity", record.originalHomeActivity ?: "")
+            put("intendedDisablePackages", JSONArray(record.intendedDisablePackages))
+            put("modifiedByMoteTvPackages", JSONArray(record.modifiedByMoteTvPackages))
+        }
+    }
+
+    private fun deserializeBackup(root: JSONObject): DebloatBackupRecord {
+        val devObj = root.getJSONObject("deviceInfo")
+        val devInfo = TvDeviceInfo(
+            manufacturer = devObj.optString("manufacturer"),
+            model = devObj.optString("model"),
+            deviceName = devObj.optString("deviceName"),
+            productBoard = devObj.optString("productBoard"),
+            androidVersion = devObj.optString("androidVersion"),
+            sdkVersion = devObj.optInt("sdkVersion", 0),
+            buildId = devObj.optString("buildId"),
+            buildFingerprint = devObj.optString("buildFingerprint"),
+            currentHomePackage = devObj.optString("currentHomePackage").ifBlank { null },
+            currentHomeActivity = devObj.optString("currentHomeActivity").ifBlank { null },
+            currentHomeLabel = devObj.optString("currentHomePackage").ifBlank { null }
+        )
+        return DebloatBackupRecord(
+            backupId = root.getString("backupId"),
+            createdAtMs = root.getLong("createdAtMs"),
+            deviceInfo = devInfo,
+            allInstalledPackages = jsonArrayToList(root.getJSONArray("allInstalledPackages")),
+            originallyDisabledPackages = jsonArrayToList(root.getJSONArray("originallyDisabledPackages")),
+            originalHomePackage = root.optString("originalHomePackage").ifBlank { null },
+            originalHomeActivity = root.optString("originalHomeActivity").ifBlank { null },
+            intendedDisablePackages = jsonArrayToList(root.optJSONArray("intendedDisablePackages")),
+            modifiedByMoteTvPackages = jsonArrayToList(root.optJSONArray("modifiedByMoteTvPackages"))
+        )
+    }
+
+    private fun jsonArrayToList(arr: JSONArray?): List<String> {
+        if (arr == null) return emptyList()
+        return (0 until arr.length()).map { arr.getString(it) }
+    }
+
+    private fun serializePendingOperations(operations: List<PendingDebloatOperation>): JSONArray {
+        val arr = JSONArray()
+        operations.forEach { op ->
+            arr.put(
+                JSONObject().apply {
+                    put("operationId", op.operationId)
+                    put("backupId", op.backupId)
+                    put("packageName", op.packageName)
+                    put("wasOriginallyDisabled", op.wasOriginallyDisabled)
+                    put("deviceManufacturer", op.deviceManufacturer)
+                    put("deviceModel", op.deviceModel)
+                    put("deviceFingerprint", op.deviceFingerprint)
+                    put("createdAtMs", op.createdAtMs)
+                    put("status", op.status.name)
+                    put("failureDetail", op.failureDetail ?: "")
+                }
+            )
+        }
+        return arr
+    }
+
+    private fun deserializePendingOperations(arr: JSONArray): List<PendingDebloatOperation> {
+        return (0 until arr.length()).map { i ->
+            val obj = arr.getJSONObject(i)
+            val statusName = obj.optString("status", PendingOperationStatus.PENDING_DISABLE.name)
+            val status = runCatching { PendingOperationStatus.valueOf(statusName) }
+                .getOrDefault(PendingOperationStatus.PENDING_DISABLE)
+            PendingDebloatOperation(
+                operationId = obj.getString("operationId"),
+                backupId = obj.getString("backupId"),
+                packageName = obj.getString("packageName"),
+                wasOriginallyDisabled = obj.getBoolean("wasOriginallyDisabled"),
+                deviceManufacturer = obj.optString("deviceManufacturer"),
+                deviceModel = obj.optString("deviceModel"),
+                deviceFingerprint = obj.optString("deviceFingerprint"),
+                createdAtMs = obj.getLong("createdAtMs"),
+                status = status,
+                failureDetail = obj.optString("failureDetail").ifBlank { null }
+            )
+        }
+    }
+}
